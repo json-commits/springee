@@ -10,6 +10,9 @@ import os
 import requests
 import time, atexit
 
+import asyncio
+from aiohttp import web
+
 intents = discord.Intents.default()
 intents.members = True
 intents.messages = True
@@ -17,6 +20,17 @@ intents.message_content = True
 
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
+
+async def start_health_server():
+    app = web.Application()
+    app.router.add_get('/', handle_health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', 8000)
+    await site.start()
+
+async def handle_health_check(request):
+    return web.Response(text="OK", status=200)
 
 class JibbleLogin(ui.Modal, title='Jibble Login'):
     email = ui.TextInput(label='Email', placeholder='Enter your email address')
@@ -80,7 +94,7 @@ class JibbleLogin(ui.Modal, title='Jibble Login'):
                 )
 
             else:
-                print(f"Access Token: {access_token}, Person ID: {person_id}")
+                # print(f"Access Token: {access_token}, Person ID: {person_id}")
                 await interaction.followup.send('Failed to retrieve access token or person ID.', ephemeral=True)
 
         except Exception as e:
@@ -252,7 +266,16 @@ async def on_ready():
     print(f'We have logged in as {client.user}')
     await tree.sync()
     print("Synced the command tree.")
+    print("Bot is ready to receive commands.")
 
+
+async def main():
+    token = os.getenv('BOT_DISCORD_TOKEN')
+
+    await asyncio.gather(
+        start_health_server(),
+        client.start(token)
+    )
 
 if __name__ == "__main__":
     JIBBLE_PERSONS_LIST = {}
@@ -281,6 +304,4 @@ if __name__ == "__main__":
 
     print("Loaded Jibble persons list:", JIBBLE_PERSONS_LIST)
 
-    token = os.getenv('BOT_DISCORD_TOKEN')
-    print("Token:", token)
-    client.run(token)
+    asyncio.run(main())
