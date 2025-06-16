@@ -187,8 +187,18 @@ async def clock(interaction: Interaction, clock_type: str):
         await interaction.followup.send(f"Error clocking {clock_type.lower()}: {e}", ephemeral=True)
 
 
-async def availablity_rename(interaction: Interaction, status: str):
-    user = client.get_user(interaction.user.id)
+async def availablity_rename(interaction, status: str):
+    try:
+        user_id = interaction.user.id
+        is_message = False
+    except AttributeError:
+        try:
+            user_id = interaction.author.id
+            is_message = True
+        except AttributeError:
+            raise ValueError("Interaction does not have a valid user or author.")
+
+    user = client.get_user(user_id)
 
     if not user:
         await interaction.followup.send(
@@ -203,11 +213,11 @@ async def availablity_rename(interaction: Interaction, status: str):
     message = ""
     for guild in user.mutual_guilds:
         try:
-            member = guild.get_member(user.id)
+            member = guild.get_member(user_id)
             original_name = re.sub(r'\s*\[.*?]', '', member.display_name)
 
-            await guild.get_member(user.id).edit(nick=f"{original_name} [{status}]")
-            message += f"Nickname changed to **{interaction.user.display_name} [{status}]** in {guild.name}.\n"
+            await guild.get_member(user_id).edit(nick=f"{original_name} [{status}]")
+            message += f"Nickname changed to **{original_name} [{status}]** in {guild.name}.\n"
             return
         except discord.Forbidden:
             message += f"I don't have permission to change your nickname in {guild.name}. (Possibly because you're the server owner) Please rename yourself manually.\n"
@@ -219,6 +229,9 @@ async def availablity_rename(interaction: Interaction, status: str):
             message += f"An unexpected error occurred in {guild.name}: {e}\n"
             continue
     if message:
+        if is_message:
+            return
+
         await interaction.followup.send(message, ephemeral=True)
 
 @tree.command(name="jibble_connect", description="Connect to your Jibble account")
@@ -239,8 +252,11 @@ async def clock_out(interaction: Interaction):
 async def brb(interaction: Interaction, reason: str = "Taking a break"):
     await interaction.response.defer(thinking=True, ephemeral=True)
     await availablity_rename(interaction, "BRB")
+
     global UNAVAILABLE_USERS_LIST
-    UNAVAILABLE_USERS_LIST += {interaction.user.id: reason}
+    UNAVAILABLE_USERS_LIST.update({interaction.user.id: reason})
+
+    await interaction.followup.send(f"Your status has been set to **BRB**. Reason: {reason}", ephemeral=True)
 
 
 @tree.command(name="ping", description="Ping the bot")
@@ -255,10 +271,34 @@ async def echo(interaction: Interaction, message: str, message2: str, message3: 
 @client.event
 async def on_message(message):
     global UNAVAILABLE_USERS_LIST
-    if message.raw_mentions in UNAVAILABLE_USERS_LIST:
-        reason = UNAVAILABLE_USERS_LIST[message.raw_mentions]
-        await message.channel.send(f"Hello {[user.display_name for user in message.mentions]}, "
-                                   f"is/are currently unavailable. Reason: {reason}")
+    if message.author.bot:
+        return
+
+    if re.search(r'\[BRB]', message.author.display_name):
+        await availablity_rename(message, "Available")
+
+        try:
+            UNAVAILABLE_USERS_LIST.pop(message.author.id)
+        except KeyError:
+            pass
+        except Exception as e:
+            print(f"Error while renaming user: {e}")
+            return
+
+    intersected_users = set(message.raw_mentions) & set(UNAVAILABLE_USERS_LIST)
+
+    if not intersected_users:
+        return
+
+    message_draft = f""
+    for user_id in intersected_users:
+        reason = UNAVAILABLE_USERS_LIST[user_id]
+        display_name = message.guild.get_member(user_id).display_name
+        message_draft += f"{display_name} is currently unavailable. Reason: {reason}\n"
+
+    if message_draft:
+        await message.channel.send(message_draft, delete_after=5)
+
 
 
 @client.event
@@ -279,7 +319,7 @@ async def main():
 
 if __name__ == "__main__":
     JIBBLE_PERSONS_LIST = {}
-    UNAVAILABLE_USERS_LIST = []
+    UNAVAILABLE_USERS_LIST = {}
 
     # Register a function to run on exit
     def exit_handler():
